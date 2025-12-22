@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Retro Oyun Projesi</title>
+    <title>Retro Savunma</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -15,44 +15,30 @@
         const ctx = canvas.getContext('2d');
 
         // --- OYUN DEĞİŞKENLERİ ---
-        const oyuncu = {
-            x: 400,
-            y: 500,
-            w: 30,
-            h: 30,
-            hiz: 5,
-            renk: '#0f0' 
-        };
+        const oyuncu = { x: 400, y: 500, w: 30, h: 30, hiz: 5, renk: '#0f0' };
 
         let mermiler = [];
         let dusmanlar = [];
+        let guclendirmeler = []; 
+        let guclendirmeUretmeSayaci = Math.random() * 1200 + 1200; // Power-up sıklığı
+        let aktifGucSuresi = 0; 
+
         let atesEtmeSayaci = 0;
         let dusmanUretmeSayaci = 0; 
         let puan = 0;
+        let oyunDurumu = 'menu'; 
+        let enYuksekPuan = localStorage.getItem('rekor') || 0;
 
-        // YENİ: Oyunun durumunu kontrol eden değişken
-        let oyunDevamEdiyor = true;
-
-        const tuslar = {
-            ArrowUp: false,
-            ArrowDown: false,
-            ArrowLeft: false,
-            ArrowRight: false,
-            Space: false
-        };
-
+        const tuslar = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false, Space: false };
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         const audioCtx = new AudioContext();
 
-        // --- OLAY DİNLEYİCİLERİ ---
+        // --- KONTROLLER (Sadece Klavye) ---
         document.addEventListener('keydown', (e) => {
-            if (audioCtx.state === 'suspended') audioCtx.resume();
+            // Menüdeyken veya Oyun Bittiyken Enter ile işlem yap
+            if (oyunDurumu === 'menu' && e.code === "Enter") { baslat(); return; }
+            if (oyunDurumu === 'gameover' && e.code === "Enter") { location.reload(); return; }
             
-            // Oyun bittiyse ve Enter'a basılırsa sayfayı yenile (Yeniden Başla)
-            if (!oyunDevamEdiyor && e.code === "Enter") {
-                location.reload(); 
-            }
-
             if(e.code === "Space") tuslar.Space = true;
             if(tuslar.hasOwnProperty(e.code)) tuslar[e.code] = true;
         });
@@ -62,19 +48,47 @@
             if(tuslar.hasOwnProperty(e.code)) tuslar[e.code] = false;
         });
 
+        // Mouse tıklaması ile de başlasın (Opsiyonel)
+        canvas.addEventListener('click', () => {
+            if (oyunDurumu === 'menu') baslat();
+            if (oyunDurumu === 'gameover') location.reload();
+        });
+
+        function baslat() {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            oyunDurumu = 'playing';
+            // Oyuncuyu başlangıç pozisyonuna al
+            oyuncu.x = canvas.width / 2 - 15;
+            oyuncu.y = canvas.height - 100;
+        }
+
         // --- SESLER ---
         function atesSesiYap() {
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             osc.connect(gain);
             gain.connect(audioCtx.destination);
-            osc.type = 'square'; 
+            osc.type = aktifGucSuresi > 0 ? 'sawtooth' : 'square'; 
             osc.frequency.setValueAtTime(880, audioCtx.currentTime); 
             osc.frequency.exponentialRampToValueAtTime(110, audioCtx.currentTime + 0.1);
             gain.gain.setValueAtTime(0.1, audioCtx.currentTime); 
             gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
             osc.start();
             osc.stop(audioCtx.currentTime + 0.1);
+        }
+
+        function gucSesiYap() {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.type = 'sine'; 
+            osc.frequency.setValueAtTime(400, audioCtx.currentTime); 
+            osc.frequency.linearRampToValueAtTime(800, audioCtx.currentTime + 0.1);
+            gain.gain.setValueAtTime(0.2, audioCtx.currentTime); 
+            gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.3);
         }
 
         function patlamaSesi() {
@@ -91,30 +105,23 @@
             osc.stop(audioCtx.currentTime + 0.1);
         }
 
-        // YENİ: Game Over Sesi (Hüzünlü, aşağı doğru kayan bir ses)
         function oyunBittiSesi() {
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             osc.connect(gain);
             gain.connect(audioCtx.destination);
-            
-            osc.type = 'triangle'; // Üçgen dalga (Daha eski bilgisayar havası)
-            
-            // Yüksekten başlayıp çok yavaşça aşağı iner
+            osc.type = 'triangle';
             osc.frequency.setValueAtTime(400, audioCtx.currentTime); 
-            osc.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + 1); // 1 saniye sürsün
-            
+            osc.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + 1);
             gain.gain.setValueAtTime(0.2, audioCtx.currentTime); 
             gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 1);
-            
             osc.start();
             osc.stop(audioCtx.currentTime + 1);
         }
 
         // --- OYUN MANTIĞI ---
         function guncelle() {
-            // Eğer oyun bittiyse hiçbir şeyi güncelleme (Hareketleri durdur)
-            if (!oyunDevamEdiyor) return;
+            if (oyunDurumu !== 'playing') return;
 
             // Oyuncu Hareketi
             if (tuslar.ArrowUp && oyuncu.y > 0) oyuncu.y -= oyuncu.hiz;
@@ -124,85 +131,77 @@
 
             // Ateş Etme
             if (tuslar.Space && atesEtmeSayaci <= 0) {
-                mermiler.push({
-                    x: oyuncu.x + (oyuncu.w / 2) - 2.5,
-                    y: oyuncu.y,
-                    w: 5,
-                    h: 15,
-                    hiz: 10,
-                    renk: '#ff0055'
-                });
+                // Merkez mermi
+                mermiler.push({ x: oyuncu.x + 12.5, y: oyuncu.y, w: 5, h: 15, hiz: 10, vx: 0, renk: '#ff0055' });
+                
+                // Güçlendirme varsa ekstra mermiler
+                if (aktifGucSuresi > 0) {
+                    mermiler.push({ x: oyuncu.x, y: oyuncu.y, w: 5, h: 15, hiz: 10, vx: -3, renk: '#00ffff' }); 
+                    mermiler.push({ x: oyuncu.x + 25, y: oyuncu.y, w: 5, h: 15, hiz: 10, vx: 3, renk: '#00ffff' });
+                }
                 atesSesiYap(); 
                 atesEtmeSayaci = 10;
             }
             if (atesEtmeSayaci > 0) atesEtmeSayaci--;
 
-            // Mermi Hareketi
+            // Mermiler
             for (let i = 0; i < mermiler.length; i++) {
                 mermiler[i].y -= mermiler[i].hiz;
-                if (mermiler[i].y < 0) {
-                    mermiler.splice(i, 1);
-                    i--;
+                mermiler[i].x += mermiler[i].vx; 
+                if (mermiler[i].y < 0 || mermiler[i].x < 0 || mermiler[i].x > canvas.width) { 
+                    mermiler.splice(i, 1); i--; 
+                }
+            }
+
+            // Güçlendirme (Power-up)
+            if (aktifGucSuresi > 0) aktifGucSuresi--;
+            
+            if (guclendirmeUretmeSayaci <= 0) {
+                const rastgeleX = Math.random() * (canvas.width - 30);
+                guclendirmeler.push({ x: rastgeleX, y: -30, w: 30, h: 30, hiz: 3, tur: 'uclu_ates', renk: '#00ffff' });
+                guclendirmeUretmeSayaci = Math.random() * 1200 + 1200; 
+            }
+            guclendirmeUretmeSayaci--;
+            
+            for (let i = 0; i < guclendirmeler.length; i++) {
+                const guc = guclendirmeler[i];
+                guc.y += guc.hiz;
+                // Oyuncu aldı mı?
+                if (oyuncu.x < guc.x + guc.w && oyuncu.x + oyuncu.w > guc.x && oyuncu.y < guc.y + guc.h && oyuncu.y + oyuncu.h > guc.y) {
+                    aktifGucSuresi = 300; gucSesiYap(); guclendirmeler.splice(i, 1); i--;
+                } else if (guc.y > canvas.height) {
+                    guclendirmeler.splice(i, 1); i--;
                 }
             }
 
             // Düşman Üretme
             if (dusmanUretmeSayaci <= 0) {
                 const rastgeleX = Math.random() * (canvas.width - 30);
-                dusmanlar.push({
-                    x: rastgeleX,
-                    y: -30,
-                    w: 30,
-                    h: 30,
-                    hiz: 3 + (puan / 100), // YENİ: Puan arttıkça düşmanlar hızlansın!
-                    renk: '#f00'
-                });
-                // Puan arttıkça daha sık düşman gelsin
+                dusmanlar.push({ x: rastgeleX, y: -30, w: 30, h: 30, hiz: 3 + (puan / 100), renk: '#f00' });
                 dusmanUretmeSayaci = Math.max(20, 50 - (puan / 10)); 
             }
             dusmanUretmeSayaci--;
 
-            // Düşman Hareketi ve Çarpışmalar
+            // Düşman Hareketi ve Game Over
             for (let i = 0; i < dusmanlar.length; i++) {
                 const dusman = dusmanlar[i];
                 dusman.y += dusman.hiz;
-
-                // 1. Ekrandan Çıkma Kontrolü
-                if (dusman.y > canvas.height) {
-                    dusmanlar.splice(i, 1);
-                    i--;
-                    continue; // Döngünün başına dön
-                }
-
-                // 2. YENİ: DÜŞMAN - OYUNCU ÇARPIŞMASI (GAME OVER)
-                if (
-                    oyuncu.x < dusman.x + dusman.w &&
-                    oyuncu.x + oyuncu.w > dusman.x &&
-                    oyuncu.y < dusman.y + dusman.h &&
-                    oyuncu.y + oyuncu.h > dusman.y
-                ) {
-                    oyunDevamEdiyor = false; // Oyunu bitir
-                    oyunBittiSesi(); // Hüzünlü sesi çal
+                if (dusman.y > canvas.height) { dusmanlar.splice(i, 1); i--; continue; }
+                
+                // Oyuncuya çarpma
+                if (oyuncu.x < dusman.x + dusman.w && oyuncu.x + oyuncu.w > dusman.x && oyuncu.y < dusman.y + dusman.h && oyuncu.y + oyuncu.h > dusman.y) {
+                    oyunDurumu = 'gameover'; oyunBittiSesi();
+                    if (puan > enYuksekPuan) { localStorage.setItem('rekor', puan); enYuksekPuan = puan; }
                 }
             }
 
-            // Mermi - Düşman Çarpışması
+            // Çarpışmalar (Mermi vs Düşman)
             for (let d = dusmanlar.length - 1; d >= 0; d--) {
                 for (let m = mermiler.length - 1; m >= 0; m--) {
                     const dusman = dusmanlar[d];
                     const mermi = mermiler[m];
-
-                    if (
-                        mermi.x < dusman.x + dusman.w &&
-                        mermi.x + mermi.w > dusman.x &&
-                        mermi.y < dusman.y + dusman.h &&
-                        mermi.y + mermi.h > dusman.y
-                    ) {
-                        dusmanlar.splice(d, 1);
-                        mermiler.splice(m, 1);
-                        puan += 10;
-                        patlamaSesi();
-                        break; 
+                    if (mermi.x < dusman.x + dusman.w && mermi.x + mermi.w > dusman.x && mermi.y < dusman.y + dusman.h && mermi.y + mermi.h > dusman.y) {
+                        dusmanlar.splice(d, 1); mermiler.splice(m, 1); puan += 10; patlamaSesi(); break; 
                     }
                 }
             }
@@ -210,59 +209,44 @@
 
         // --- ÇİZİM ---
         function ciz() {
-            // Arka planı temizle
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // Oyuncuyu çiz
-            ctx.fillStyle = oyuncu.renk;
+            if (oyunDurumu === 'menu') {
+                ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+                ctx.font = '50px Courier New'; ctx.fillText("RETRO SAVUNMA", canvas.width / 2, canvas.height / 2 - 50);
+                ctx.font = '20px Courier New'; ctx.fillText("Başlamak için ENTER'a bas veya Tıkla", canvas.width / 2, canvas.height / 2 + 20);
+                ctx.font = '15px Courier New'; ctx.fillStyle = '#aaa'; ctx.fillText("Yön Tuşları: Hareket | Space: Ateş", canvas.width / 2, canvas.height / 2 + 60);
+                return; 
+            }
+
+            // Oyuncu
+            ctx.fillStyle = aktifGucSuresi > 0 ? '#00ffff' : oyuncu.renk; 
             ctx.fillRect(oyuncu.x, oyuncu.y, oyuncu.w, oyuncu.h);
+            if (aktifGucSuresi > 0) { ctx.fillStyle = '#00ffff'; ctx.fillRect(oyuncu.x, oyuncu.y + 35, (aktifGucSuresi / 10), 5); }
 
-            // Mermileri çiz
-            mermiler.forEach(mermi => {
-                ctx.fillStyle = mermi.renk;
-                ctx.fillRect(mermi.x, mermi.y, mermi.w, mermi.h);
+            mermiler.forEach(m => { ctx.fillStyle = m.renk; ctx.fillRect(m.x, m.y, m.w, m.h); });
+            dusmanlar.forEach(d => { ctx.fillStyle = d.renk; ctx.fillRect(d.x, d.y, d.w, d.h); });
+            guclendirmeler.forEach(g => { 
+                ctx.fillStyle = g.renk; ctx.fillRect(g.x, g.y, g.w, g.h);
+                ctx.fillStyle = '#000'; ctx.font = '20px Arial'; ctx.fillText("P", g.x + 8, g.y + 22);
             });
 
-            // Düşmanları çiz
-            dusmanlar.forEach(dusman => {
-                ctx.fillStyle = dusman.renk;
-                ctx.fillRect(dusman.x, dusman.y, dusman.w, dusman.h);
-            });
-
-            // Puan Tablosu
-            ctx.fillStyle = '#fff'; 
-            ctx.font = '20px Courier New'; 
+            ctx.fillStyle = '#fff'; ctx.font = '20px Courier New'; ctx.textAlign = 'start'; 
             ctx.fillText("PUAN: " + puan, 20, 40);
+            ctx.textAlign = 'right'; ctx.fillText("REKOR: " + enYuksekPuan, canvas.width - 20, 40);
 
-            // YENİ: GAME OVER EKRANI
-            if (!oyunDevamEdiyor) {
-                // Kırmızımsı yarı saydam bir perde çek
-                ctx.fillStyle = 'rgba(50, 0, 0, 0.7)';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-                // Game Over yazısı
-                ctx.fillStyle = '#fff';
-                ctx.font = '60px Courier New';
-                ctx.textAlign = 'center'; // Yazıyı ortala
-                ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2);
-
-                // Alt bilgi
-                ctx.font = '20px Courier New';
-                ctx.fillText("Yeniden başlamak için ENTER'a bas", canvas.width / 2, canvas.height / 2 + 50);
-                
-                // Text ayarını eski haline getir (Sola dayalı) yoksa puan tablosu kayar
-                ctx.textAlign = 'start'; 
+            if (oyunDurumu === 'gameover') {
+                ctx.fillStyle = 'rgba(50, 0, 0, 0.7)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '60px Courier New';
+                ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2 - 20);
+                ctx.font = '20px Courier New'; ctx.fillText("Skorun: " + puan, canvas.width / 2, canvas.height / 2 + 40);
+                if (puan >= enYuksekPuan && puan > 0) { ctx.fillStyle = '#ff0'; ctx.fillText("YENİ REKOR!", canvas.width / 2, canvas.height / 2 + 70); ctx.fillStyle = '#fff'; }
+                ctx.fillText("Yeniden başlamak için ENTER'a bas", canvas.width / 2, canvas.height / 2 + 120);
             }
         }
 
-        function oyunDongusu() {
-            guncelle();
-            ciz();
-            requestAnimationFrame(oyunDongusu);
-        }
-
+        function oyunDongusu() { guncelle(); ciz(); requestAnimationFrame(oyunDongusu); }
         oyunDongusu();
-
     </script>
 </body>
-</html> 
+</html>

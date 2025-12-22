@@ -1,0 +1,18 @@
+body {
+    background-color: #222;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+    overflow: hidden;
+    font-family: 'Courier New', Courier, monospace; /* Retro yazı tipi */
+}
+
+canvas {
+    border: 4px solid #fff;
+    background-color: #000;
+    /* Hafif bir CRT monitör parlaması verelim */
+    box-shadow: 0 0 20px rgba(0, 255, 0, 0.2); 
+    display: block;
+}

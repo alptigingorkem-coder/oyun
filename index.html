@@ -8,37 +8,79 @@
 </head>
 <body>
 
-    <canvas id="oyunSahnesi" width="800" height="600"></canvas>
+    <canvas id="oyunSahnesi"></canvas>
 
     <script>
         const canvas = document.getElementById('oyunSahnesi');
         const ctx = canvas.getContext('2d');
 
+        // --- GÖRSEL YÜKLEME ---
+        const gemiResmi = new Image();
+        gemiResmi.src = 'gemi.png'; // Dosya adının birebir aynı olduğundan emin ol
+
+        // --- TAM EKRAN AYARLARI ---
+        function ekranAyarla() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            // Ekran boyutu değişirse yıldızları vs. yeniden ayarlamak gerekebilir
+            // ama şimdilik sadece canvas boyutunu güncellemek yeterli.
+        }
+        // Sayfa açıldığında ve boyutu değiştiğinde (resize) çalışır
+        window.addEventListener('resize', ekranAyarla);
+        ekranAyarla(); // İlk açılışta ayarla
+
         // --- OYUN DEĞİŞKENLERİ ---
-        const oyuncu = { x: 400, y: 500, w: 30, h: 30, hiz: 5, renk: '#0f0' };
+        // Gemiyi 60x90 civarı yapalım (Senin görseline göre orantılayabilirsin)
+        const oyuncu = { x: 0, y: 0, w: 150, h: 180, hiz: 8, renk: '#0f0' };
 
         let mermiler = [];
         let dusmanlar = [];
         let guclendirmeler = []; 
-        let guclendirmeUretmeSayaci = Math.random() * 1200 + 1200; // Power-up sıklığı
+        let guclendirmeUretmeSayaci = Math.random() * 1200 + 1200; 
         let aktifGucSuresi = 0; 
+        
+        let yildizlar = [];
+        const yildizSayisi = 150; // Ekran büyüdüğü için yıldız sayısını artırdım
 
         let atesEtmeSayaci = 0;
         let dusmanUretmeSayaci = 0; 
         let puan = 0;
         let oyunDurumu = 'menu'; 
         let enYuksekPuan = localStorage.getItem('rekor') || 0;
+        let can = 3; 
+        let hasarAlmaZamani = 0; 
+        let dokunulmazlikSuresi = 120; 
+        let seviye = 1;
+        let oldurulenDusman = 0;
+        let seviyeHedefi = 20; 
+        let seviyeGecisSayaci = 0; 
+
+        // --- MÜZİK SİSTEMİ ---
+        let muzikAcik = false;
+        let notaSirasi = 0;
+        let sonrakiNotaZamani = 0;
+        const muzikNotasi = [110, 110, 130.81, 110, 146.83, 110, 164.81, 130.81, 110, 110, 130.81, 110, 196.00, 164.81, 146.83, 130.81];
+        const notaSuresi = 0.2; 
 
         const tuslar = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false, Space: false };
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         const audioCtx = new AudioContext();
 
-        // --- KONTROLLER (Sadece Klavye) ---
+        // Yıldızları oluştur
+        for (let i = 0; i < yildizSayisi; i++) {
+            yildizlar.push({ 
+                x: Math.random() * window.innerWidth, // İlk oluşumda ekran genişliğini kullan
+                y: Math.random() * window.innerHeight, 
+                boyut: Math.random() * 2 + 0.5, 
+                hiz: Math.random() * 3 + 0.5 
+            });
+        }
+
+        // --- KONTROLLER ---
         document.addEventListener('keydown', (e) => {
-            // Menüdeyken veya Oyun Bittiyken Enter ile işlem yap
             if (oyunDurumu === 'menu' && e.code === "Enter") { baslat(); return; }
             if (oyunDurumu === 'gameover' && e.code === "Enter") { location.reload(); return; }
-            
+            if (oyunDurumu === 'level_up' && e.code === "Enter") { seviyeAtla(); return; }
             if(e.code === "Space") tuslar.Space = true;
             if(tuslar.hasOwnProperty(e.code)) tuslar[e.code] = true;
         });
@@ -48,82 +90,78 @@
             if(tuslar.hasOwnProperty(e.code)) tuslar[e.code] = false;
         });
 
-        // Mouse tıklaması ile de başlasın (Opsiyonel)
         canvas.addEventListener('click', () => {
             if (oyunDurumu === 'menu') baslat();
             if (oyunDurumu === 'gameover') location.reload();
+            if (oyunDurumu === 'level_up') seviyeAtla();
         });
 
         function baslat() {
             if (audioCtx.state === 'suspended') audioCtx.resume();
             oyunDurumu = 'playing';
-            // Oyuncuyu başlangıç pozisyonuna al
-            oyuncu.x = canvas.width / 2 - 15;
-            oyuncu.y = canvas.height - 100;
+            
+            // Oyuncuyu ekranın tam ortasına yerleştir
+            oyuncu.x = canvas.width / 2 - oyuncu.w / 2;
+            oyuncu.y = canvas.height - 150;
+            
+            can = 3;
+            mermiler = [];
+            dusmanlar = [];
+            guclendirmeler = [];
+            puan = 0;
+            hasarAlmaZamani = 0;
+            seviye = 1;
+            oldurulenDusman = 0;
+            
+            muzikAcik = true;
+            notaSirasi = 0;
+            sonrakiNotaZamani = audioCtx.currentTime;
+            muzikDongusu();
         }
 
-        // --- SESLER ---
-        function atesSesiYap() {
-            const osc = audioCtx.createOscillator();
-            const gain = audioCtx.createGain();
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.type = aktifGucSuresi > 0 ? 'sawtooth' : 'square'; 
-            osc.frequency.setValueAtTime(880, audioCtx.currentTime); 
-            osc.frequency.exponentialRampToValueAtTime(110, audioCtx.currentTime + 0.1);
-            gain.gain.setValueAtTime(0.1, audioCtx.currentTime); 
-            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
-            osc.start();
-            osc.stop(audioCtx.currentTime + 0.1);
+        function seviyeEkraniBaslat() {
+            oyunDurumu = 'level_up';
+            seviyeGecisSayaci = 180; 
+            mermiler = []; 
+            guclendirmeler = [];
         }
 
-        function gucSesiYap() {
-            const osc = audioCtx.createOscillator();
-            const gain = audioCtx.createGain();
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.type = 'sine'; 
-            osc.frequency.setValueAtTime(400, audioCtx.currentTime); 
-            osc.frequency.linearRampToValueAtTime(800, audioCtx.currentTime + 0.1);
-            gain.gain.setValueAtTime(0.2, audioCtx.currentTime); 
-            gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
-            osc.start();
-            osc.stop(audioCtx.currentTime + 0.3);
+        function seviyeAtla() {
+            seviye++;
+            oldurulenDusman = 0;
+            seviyeHedefi += 5; 
+            oyunDurumu = 'playing';
+            if (can < 3) can++;
+            gucSesiYap(); 
         }
 
-        function patlamaSesi() {
-            const osc = audioCtx.createOscillator();
-            const gain = audioCtx.createGain();
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.type = 'sawtooth'; 
-            osc.frequency.setValueAtTime(150, audioCtx.currentTime); 
-            osc.frequency.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
-            gain.gain.setValueAtTime(0.1, audioCtx.currentTime); 
-            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
-            osc.start();
-            osc.stop(audioCtx.currentTime + 0.1);
-        }
-
-        function oyunBittiSesi() {
-            const osc = audioCtx.createOscillator();
-            const gain = audioCtx.createGain();
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.type = 'triangle';
-            osc.frequency.setValueAtTime(400, audioCtx.currentTime); 
-            osc.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + 1);
-            gain.gain.setValueAtTime(0.2, audioCtx.currentTime); 
-            gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 1);
-            osc.start();
-            osc.stop(audioCtx.currentTime + 1);
-        }
+        // --- SES FONKSİYONLARI ---
+        function muzikDongusu() { if (!muzikAcik || (oyunDurumu !== 'playing' && oyunDurumu !== 'level_up')) return; while (sonrakiNotaZamani < audioCtx.currentTime + 0.1) { const frekans = muzikNotasi[notaSirasi]; oyunMuzigiCal(frekans, sonrakiNotaZamani); sonrakiNotaZamani += notaSuresi; notaSirasi++; if (notaSirasi >= muzikNotasi.length) notaSirasi = 0; } requestAnimationFrame(muzikDongusu); }
+        function oyunMuzigiCal(frekans, zaman) { const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain(); osc.connect(gain); gain.connect(audioCtx.destination); osc.type = 'triangle'; osc.frequency.value = frekans; gain.gain.setValueAtTime(0.3, zaman); gain.gain.exponentialRampToValueAtTime(0.001, zaman + 0.15); osc.start(zaman); osc.stop(zaman + 0.15); }
+        function atesSesiYap() { const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain(); osc.connect(gain); gain.connect(audioCtx.destination); osc.type = aktifGucSuresi > 0 ? 'square' : 'triangle'; osc.frequency.setValueAtTime(800, audioCtx.currentTime); osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.1); gain.gain.setValueAtTime(0.08, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1); osc.start(); osc.stop(audioCtx.currentTime + 0.1); }
+        function gucSesiYap() { const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain(); osc.connect(gain); gain.connect(audioCtx.destination); osc.type = 'sine'; osc.frequency.setValueAtTime(300, audioCtx.currentTime); osc.frequency.linearRampToValueAtTime(600, audioCtx.currentTime + 0.1); osc.frequency.linearRampToValueAtTime(1200, audioCtx.currentTime + 0.3); gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3); osc.start(); osc.stop(audioCtx.currentTime + 0.3); }
+        function patlamaSesi() { const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain(); osc.connect(gain); gain.connect(audioCtx.destination); osc.type = 'sawtooth'; osc.frequency.setValueAtTime(100, audioCtx.currentTime); osc.frequency.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15); gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15); osc.start(); osc.stop(audioCtx.currentTime + 0.15); }
+        function hasarSesi() { const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain(); osc.connect(gain); gain.connect(audioCtx.destination); osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, audioCtx.currentTime); osc.frequency.linearRampToValueAtTime(50, audioCtx.currentTime + 0.3); gain.gain.setValueAtTime(0.2, audioCtx.currentTime); gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3); osc.start(); osc.stop(audioCtx.currentTime + 0.3); }
+        function oyunBittiSesi() { const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain(); osc.connect(gain); gain.connect(audioCtx.destination); osc.type = 'triangle'; osc.frequency.setValueAtTime(300, audioCtx.currentTime); osc.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + 1.5); gain.gain.setValueAtTime(0.2, audioCtx.currentTime); gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 1.5); osc.start(); osc.stop(audioCtx.currentTime + 1.5); }
 
         // --- OYUN MANTIĞI ---
         function guncelle() {
-            if (oyunDurumu !== 'playing') return;
+            yildizlar.forEach(yildiz => {
+                let hizCarpani = (oyunDurumu === 'level_up') ? 5 : 1;
+                yildiz.y += yildiz.hiz * hizCarpani;
+                // Yıldız ekrandan çıkarsa rastgele bir X konumundan geri gelsin
+                if (yildiz.y > canvas.height) { yildiz.y = 0; yildiz.x = Math.random() * canvas.width; }
+            });
 
-            // Oyuncu Hareketi
+            if (oyunDurumu === 'level_up') {
+                if (seviyeGecisSayaci > 0) { seviyeGecisSayaci--; } else { seviyeAtla(); }
+                return; 
+            }
+
+            if (oyunDurumu !== 'playing') return;
+            if (hasarAlmaZamani > 0) hasarAlmaZamani--;
+
+            // Oyuncu Hareketi (Sınırları canvas.width/height'e göre kontrol et)
             if (tuslar.ArrowUp && oyuncu.y > 0) oyuncu.y -= oyuncu.hiz;
             if (tuslar.ArrowDown && oyuncu.y + oyuncu.h < canvas.height) oyuncu.y += oyuncu.hiz;
             if (tuslar.ArrowLeft && oyuncu.x > 0) oyuncu.x -= oyuncu.hiz;
@@ -131,85 +169,82 @@
 
             // Ateş Etme
             if (tuslar.Space && atesEtmeSayaci <= 0) {
-                // Merkez mermi
-                mermiler.push({ x: oyuncu.x + 12.5, y: oyuncu.y, w: 5, h: 15, hiz: 10, vx: 0, renk: '#ff0055' });
-                
-                // Güçlendirme varsa ekstra mermiler
+                mermiler.push({ x: oyuncu.x + oyuncu.w/2 - 2.5, y: oyuncu.y, w: 5, h: 15, hiz: 10, vx: 0, renk: '#ff0055' });
                 if (aktifGucSuresi > 0) {
-                    mermiler.push({ x: oyuncu.x, y: oyuncu.y, w: 5, h: 15, hiz: 10, vx: -3, renk: '#00ffff' }); 
-                    mermiler.push({ x: oyuncu.x + 25, y: oyuncu.y, w: 5, h: 15, hiz: 10, vx: 3, renk: '#00ffff' });
+                    mermiler.push({ x: oyuncu.x, y: oyuncu.y + 20, w: 5, h: 15, hiz: 10, vx: -3, renk: '#00ffff' }); 
+                    mermiler.push({ x: oyuncu.x + oyuncu.w - 5, y: oyuncu.y + 20, w: 5, h: 15, hiz: 10, vx: 3, renk: '#00ffff' });
                 }
-                atesSesiYap(); 
-                atesEtmeSayaci = 10;
+                atesSesiYap(); atesEtmeSayaci = 10;
             }
             if (atesEtmeSayaci > 0) atesEtmeSayaci--;
 
             // Mermiler
             for (let i = 0; i < mermiler.length; i++) {
-                mermiler[i].y -= mermiler[i].hiz;
-                mermiler[i].x += mermiler[i].vx; 
-                if (mermiler[i].y < 0 || mermiler[i].x < 0 || mermiler[i].x > canvas.width) { 
-                    mermiler.splice(i, 1); i--; 
-                }
+                mermiler[i].y -= mermiler[i].hiz; mermiler[i].x += mermiler[i].vx; 
+                if (mermiler[i].y < 0 || mermiler[i].x < 0 || mermiler[i].x > canvas.width) { mermiler.splice(i, 1); i--; }
             }
 
-            // Güçlendirme (Power-up)
             if (aktifGucSuresi > 0) aktifGucSuresi--;
-            
             if (guclendirmeUretmeSayaci <= 0) {
-                const rastgeleX = Math.random() * (canvas.width - 30);
-                guclendirmeler.push({ x: rastgeleX, y: -30, w: 30, h: 30, hiz: 3, tur: 'uclu_ates', renk: '#00ffff' });
+                // Güçlendirme herhangi bir X konumundan düşebilir
+                guclendirmeler.push({ x: Math.random() * (canvas.width - 30), y: -30, w: 30, h: 30, hiz: 3, tur: 'uclu_ates', renk: '#00ffff' });
                 guclendirmeUretmeSayaci = Math.random() * 1200 + 1200; 
             }
             guclendirmeUretmeSayaci--;
             
             for (let i = 0; i < guclendirmeler.length; i++) {
-                const guc = guclendirmeler[i];
-                guc.y += guc.hiz;
-                // Oyuncu aldı mı?
+                const guc = guclendirmeler[i]; guc.y += guc.hiz;
                 if (oyuncu.x < guc.x + guc.w && oyuncu.x + oyuncu.w > guc.x && oyuncu.y < guc.y + guc.h && oyuncu.y + oyuncu.h > guc.y) {
                     aktifGucSuresi = 300; gucSesiYap(); guclendirmeler.splice(i, 1); i--;
-                } else if (guc.y > canvas.height) {
-                    guclendirmeler.splice(i, 1); i--;
-                }
+                } else if (guc.y > canvas.height) { guclendirmeler.splice(i, 1); i--; }
             }
 
             // Düşman Üretme
             if (dusmanUretmeSayaci <= 0) {
-                const rastgeleX = Math.random() * (canvas.width - 30);
-                dusmanlar.push({ x: rastgeleX, y: -30, w: 30, h: 30, hiz: 3 + (puan / 100), renk: '#f00' });
-                dusmanUretmeSayaci = Math.max(20, 50 - (puan / 10)); 
+                let levelZorlugu = (seviye - 1) * 0.5; 
+                // Düşmanlar ekranın herhangi bir yerinden düşebilir
+                dusmanlar.push({ x: Math.random() * (canvas.width - 40), y: -40, w: 40, h: 40, hiz: 3 + (puan / 100) + levelZorlugu, renk: '#f00' });
+                dusmanUretmeSayaci = Math.max(20, 50 - (puan / 10) - (seviye * 2)); 
             }
             dusmanUretmeSayaci--;
 
-            // Düşman Hareketi ve Game Over
             for (let i = 0; i < dusmanlar.length; i++) {
-                const dusman = dusmanlar[i];
-                dusman.y += dusman.hiz;
+                const dusman = dusmanlar[i]; dusman.y += dusman.hiz;
                 if (dusman.y > canvas.height) { dusmanlar.splice(i, 1); i--; continue; }
-                
-                // Oyuncuya çarpma
                 if (oyuncu.x < dusman.x + dusman.w && oyuncu.x + oyuncu.w > dusman.x && oyuncu.y < dusman.y + dusman.h && oyuncu.y + oyuncu.h > dusman.y) {
-                    oyunDurumu = 'gameover'; oyunBittiSesi();
-                    if (puan > enYuksekPuan) { localStorage.setItem('rekor', puan); enYuksekPuan = puan; }
+                    if (hasarAlmaZamani <= 0) {
+                        can--; hasarSesi(); hasarAlmaZamani = dokunulmazlikSuresi; dusmanlar.splice(i, 1); i--;
+                        if (can <= 0) { oyunDurumu = 'gameover'; muzikAcik = false; oyunBittiSesi(); if (puan > enYuksekPuan) { localStorage.setItem('rekor', puan); enYuksekPuan = puan; }}
+                    }
                 }
             }
-
-            // Çarpışmalar (Mermi vs Düşman)
             for (let d = dusmanlar.length - 1; d >= 0; d--) {
                 for (let m = mermiler.length - 1; m >= 0; m--) {
-                    const dusman = dusmanlar[d];
-                    const mermi = mermiler[m];
+                    const dusman = dusmanlar[d]; const mermi = mermiler[m];
                     if (mermi.x < dusman.x + dusman.w && mermi.x + mermi.w > dusman.x && mermi.y < dusman.y + dusman.h && mermi.y + mermi.h > dusman.y) {
-                        dusmanlar.splice(d, 1); mermiler.splice(m, 1); puan += 10; patlamaSesi(); break; 
+                        dusmanlar.splice(d, 1); mermiler.splice(m, 1); puan += 10; oldurulenDusman++; if (oldurulenDusman >= seviyeHedefi) { seviyeEkraniBaslat(); } patlamaSesi(); break; 
                     }
                 }
             }
         }
 
-        // --- ÇİZİM ---
+        // --- ÇİZİM FONKSİYONLARI ---
+        function cizOyuncuGemi(x, y, w, h) {
+            if (gemiResmi.complete) {
+                ctx.drawImage(gemiResmi, x, y, w, h);
+            } else {
+                ctx.fillStyle = '#0f0'; ctx.fillRect(x, y, w, h);
+            }
+        }
+        function cizDusmanGemi(x, y, w, h, renk) { ctx.fillStyle = renk; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w / 4, y + h / 2); ctx.lineTo(x + w / 2, y); ctx.lineTo(x + w * 3/4, y + h / 2); ctx.lineTo(x + w, y); ctx.lineTo(x + w - 5, y + h); ctx.lineTo(x + 5, y + h); ctx.closePath(); ctx.fill(); ctx.fillStyle = '#000'; ctx.fillRect(x + w/4 - 2, y + h/2, 4, 4); ctx.fillRect(x + w*3/4 - 2, y + h/2, 4, 4); }
+        function cizGuclendirmeKapsulu(x, y, w, h, renk) { ctx.fillStyle = renk; ctx.beginPath(); ctx.ellipse(x + w/2, y + h/2, w/2, h/4, 0, 0, Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.moveTo(x, y + h/2); ctx.lineTo(x - 10, y + h/4); ctx.lineTo(x - 10, y + h*3/4); ctx.fill(); ctx.moveTo(x + w, y + h/2); ctx.lineTo(x + w + 10, y + h/4); ctx.lineTo(x + w + 10, y + h*3/4); ctx.fill(); ctx.fillStyle = '#000'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center'; ctx.fillText("P", x + w/2, y + h/2 + 6); }
+
         function ciz() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#fff';
+            yildizlar.forEach(yildiz => { ctx.globalAlpha = Math.min(yildiz.boyut / 3, 1); ctx.fillRect(yildiz.x, yildiz.y, yildiz.boyut, yildiz.boyut); });
+            ctx.globalAlpha = 1.0;
 
             if (oyunDurumu === 'menu') {
                 ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
@@ -219,21 +254,27 @@
                 return; 
             }
 
-            // Oyuncu
-            ctx.fillStyle = aktifGucSuresi > 0 ? '#00ffff' : oyuncu.renk; 
-            ctx.fillRect(oyuncu.x, oyuncu.y, oyuncu.w, oyuncu.h);
-            if (aktifGucSuresi > 0) { ctx.fillStyle = '#00ffff'; ctx.fillRect(oyuncu.x, oyuncu.y + 35, (aktifGucSuresi / 10), 5); }
+            if (oyunDurumu === 'level_up') {
+                ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+                ctx.font = '40px Courier New'; ctx.fillText("SEVİYE " + seviye + " TAMAMLANDI!", canvas.width / 2, canvas.height / 2 - 20);
+                ctx.font = '20px Courier New'; ctx.fillText("Sonraki dalga başlıyor...", canvas.width / 2, canvas.height / 2 + 30);
+                return;
+            }
 
-            mermiler.forEach(m => { ctx.fillStyle = m.renk; ctx.fillRect(m.x, m.y, m.w, m.h); });
-            dusmanlar.forEach(d => { ctx.fillStyle = d.renk; ctx.fillRect(d.x, d.y, d.w, d.h); });
-            guclendirmeler.forEach(g => { 
-                ctx.fillStyle = g.renk; ctx.fillRect(g.x, g.y, g.w, g.h);
-                ctx.fillStyle = '#000'; ctx.font = '20px Arial'; ctx.fillText("P", g.x + 8, g.y + 22);
-            });
+            if (hasarAlmaZamani <= 0 || Math.floor(hasarAlmaZamani / 10) % 2 === 0) {
+                cizOyuncuGemi(oyuncu.x, oyuncu.y, oyuncu.w, oyuncu.h);
+                if (aktifGucSuresi > 0) { ctx.fillStyle = '#00ffff'; ctx.fillRect(oyuncu.x, oyuncu.y + oyuncu.h + 5, (aktifGucSuresi / 10), 5); }
+            }
+
+            mermiler.forEach(m => { ctx.fillStyle = m.renk; ctx.fillRect(m.x, m.y, m.w, m.h); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.strokeRect(m.x, m.y, m.w, m.h); });
+            dusmanlar.forEach(d => { cizDusmanGemi(d.x, d.y, d.w, d.h, d.renk); });
+            guclendirmeler.forEach(g => { cizGuclendirmeKapsulu(g.x, g.y, g.w, g.h, g.renk); });
 
             ctx.fillStyle = '#fff'; ctx.font = '20px Courier New'; ctx.textAlign = 'start'; 
             ctx.fillText("PUAN: " + puan, 20, 40);
+            ctx.fillText("SEVİYE: " + seviye, 20, canvas.height - 20);
             ctx.textAlign = 'right'; ctx.fillText("REKOR: " + enYuksekPuan, canvas.width - 20, 40);
+            ctx.textAlign = 'start'; let kalpler = ""; for(let i=0; i<can; i++) { kalpler += "❤️ "; } ctx.fillText(kalpler, 20, 70);
 
             if (oyunDurumu === 'gameover') {
                 ctx.fillStyle = 'rgba(50, 0, 0, 0.7)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
